@@ -49,7 +49,8 @@ class TestDecodeOPS(unittest.TestCase):
   SRA    = 0b0110011
   OR     = 0b0110011
   AND    = 0b0110011
-
+  ECALL  = 0b1110011
+  EBREAK = 0b1110011
 
   def test_decode_LUI(self):
     """ Test Decode LUI OPCODE """
@@ -218,6 +219,16 @@ class TestDecodeOPS(unittest.TestCase):
   def test_decode_AND(self):
     """ Test Decode AND OPCODE """
     self.assertEqual(cpu.decode(self.AND), cpu.OPS.AND)
+    
+  def test_decode_ECALL(self):
+    """ Test Decode ECALL OPCODE """
+    self.assertEqual(cpu.decode(self.ECALL), cpu.OPS.ECALL)
+
+    
+  def test_decode_EBREAK(self):
+    """ Test Decode EBREAK OPCODE """
+    self.assertEqual(cpu.decode(self.EBREAK), cpu.OPS.EBREAK)
+
 
 @colorize(color=GREEN)
 class TestDecodeFunct3(unittest.TestCase):

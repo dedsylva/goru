@@ -32,6 +32,9 @@ class OPS(Enum):
   # R-Type
   ADD = SUB = SLL = SLT = SLTU = XOR = SRL = SRA = OR = AND = 0b0110011
 
+  # System
+  ECALL = EBREAK = 0b1110011
+
 class Funct3(Enum):
   JALR = BEQ = LB = SB = ADDI = ADD = SUB = ECALL = EBREAK = 0b000
   BNE = LH = SH = SLLI = CSRRW = SLL = 0b001
@@ -50,25 +53,46 @@ def fetch():
   return RegFile[PC]
 
 def decode(ins):
-  op_code = OPS(ins & 0b1111111)
-  f3 = None
-  f7 = None
+  op = OPS(ins & 0x7f)
+  f3, f7 = None, None
+  rs1, rs2, rd = None, None, None
 
-  print(f"OPS: {op_code.name}")
+  print(f"OPS: {op.name}")
+
+  # get_bytes
+  def gb(s,e):
+  # puts in beginning & right amount of 1111s
+    return (op.value >> e) & ((1 << (s-e+1))-1)
 
   # Funct3
-  if op_code not in (OPS.LUI, OPS.AUIPC, OPS.JAL):
-    f3 = Funct3((ins & 0b111) >> 12)
-    print(f"OPS: {op_code.name} Funct3: {bin(f3.value)}")
+  if op not in (OPS.LUI, OPS.AUIPC, OPS.JAL):
+    f3 = Funct3(gb(14,12))
+    print(f"OPS: {op.name} Funct3: {hex(f3.value)}")
 
   # Funct7
-  if op_code in (OPS.SLLI, OPS.SRLI, OPS.SRAI, OPS.ADD, OPS.SUB, OPS.SLL, OPS.SLT,
+  if op in (OPS.SLLI, OPS.SRLI, OPS.SRAI, OPS.ADD, OPS.SUB, OPS.SLL, OPS.SLT,
                  OPS.SLTU, OPS.XOR, OPS.SRL, OPS.SRA, OPS.OR, OPS.AND):
 
-    f7 = Funct7((ins & 0b1111111) >> 25)
-    print(f"OPS: {op_code.name} Funct3: {bin(f3.value)}  Funct7: {bin(f7.value)}")
+    f7 = Funct7(gb(31,25))
+    print(f"OPS: {op.name} Funct3: {hex(f3.value)}  Funct7: {hex(f7.value)}")
 
-  return op_code
+  # rd
+  if op not in (OPS.BEQ, OPS.BNE, OPS.BLT, OPS.BGE, OPS.BLTUU, OPS.BGEU, OPS.SB,
+                OPS.SH, OPS.SW, OPS.ECALL, OPS.EBREAK):
+    rd = (gb(11,7))
+
+  # rs1
+  if op not in (OPS.LUI, OPS.AUIPC, OPS.JAL, OPS.ECALL, OPS.EBREAK, OPS.CSRRWI,
+                     OPS.CSRRSI, OPS.CSRRCI):
+    rs1 = (gb(19,15))
+
+  # rs2
+  if op in (OPS.BEQ, OPS.BNE, OPS.BLT, OPS.BGE, OPS.BLTU, OPS.BGEU, OPS.SB, OPS.SH, OPS.SW,
+            OPS.ADD, OPS.SUB, OPS.SLL, OPS.SLT, OPS.SLTU, OPS.XOR, OPS.SRL, OPS.SRA, OPS.OR,
+            OPS.AND):
+    rs2 = (gb(24,20))
+
+  return op
 
 def execute():
   pass
@@ -83,9 +107,19 @@ def write_back(is_jump=False):
     RegFile[PC] += 4
   return
 
+def state():
+  pp = ''
+  for i in range(32):
+    if i != 0 and i % 8 == 0:
+      pp += '\n'
+    pp += "%3s: %08x " % ("x%d" % i, RegFile[i])
+  pp += f'\n PC: {RegFile[PC]:08x} '
+  print(''.join(pp))
+
 if __name__ == "__main__":
 
-  dat = [0b01000001111100011000001110110011, 0b01000001111100011000001110110111]
+  # dat = [0b01000001111100011000001110110011, 0b01000001111100011000001110110111]
+  dat = [0b01000001111100011000001110110011]
   for d in dat:
 
     # Instruction Fetch
@@ -93,6 +127,7 @@ if __name__ == "__main__":
 
     # Instruction Decode and Register Fetch
     op = decode(d) 
+    state()
 
     # Execute
     execute()
