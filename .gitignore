@@ -1,3 +1,4 @@
 .*.swp
 goru/__pycache__
 tests/__pycache__
+riscv-tests/

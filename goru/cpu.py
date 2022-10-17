@@ -1,12 +1,23 @@
 #! /usr/bin/python3
 from enum import Enum
+import os
+import glob
+import binascii
+import struct
+from elftools.elf.elffile import ELFFile
 
-RegFile = [0]*33
+class RegFile:
+  def __init__(self):
+    self.regs = [0]*33
+  def __getitem__(self, key):
+    return self.regs[key]
+  def __setitem__(self, key, value):
+    if key == 0:
+      return
+    self.regs[key] = value & 0xFFFFFFFF
+
 PC = 32
 NPC = 0
-
-# 64k
-memory = b'\x00*0x10000'
 
 # RV32I Base Instruction Set
 class OPS(Enum):
@@ -49,35 +60,45 @@ class Funct7(Enum):
   SLLI = SRLI = ADD = SLL = SLT = SLTU = XOR = SRL = OR = AND = 0b0000000
   SRAI = SUB = SRA = 0b0100000
 
-def fetch():
-  return RegFile[PC]
+# load the program into memory
+def load_program(addr, data, OFFSET):
+  global memory
+  addr -= OFFSET
+  assert addr >=0 and addr < len(memory)
+  memory = memory[:addr] + data + memory[addr+len(data):]
+
+
+def fetch(addr, OFFSET):
+  addr -= OFFSET
+  print('aaaa', addr)
+
+  if addr < 0 or addr >= len(memory):
+    raise Exception(f"Read out of Bounds:0x{addr:02x}")
+  return struct.unpack("<I", memory[addr:addr+4])[0]
+
+# get_bytes
+def gb(s,e):
+# puts in beginning & right amount of 1111s
+  return (ins >> e) & ((1 << (s-e+1))-1)
 
 def decode(ins):
-  op = OPS(ins & 0x7f)
-  f3, f7 = None, None
-  rs1, rs2, rd = None, None, None
+  global f3, f7, rd, rs1, rs2, imm_j
+  print(f"Decoding: {bin(ins)}")
 
-  print(f"OPS: {op.name}")
-
-  # get_bytes
-  def gb(s,e):
-  # puts in beginning & right amount of 1111s
-    return (op.value >> e) & ((1 << (s-e+1))-1)
+  op = OPS(gb(6,0))
 
   # Funct3
   if op not in (OPS.LUI, OPS.AUIPC, OPS.JAL):
     f3 = Funct3(gb(14,12))
-    print(f"OPS: {op.name} Funct3: {hex(f3.value)}")
 
   # Funct7
   if op in (OPS.SLLI, OPS.SRLI, OPS.SRAI, OPS.ADD, OPS.SUB, OPS.SLL, OPS.SLT,
                  OPS.SLTU, OPS.XOR, OPS.SRL, OPS.SRA, OPS.OR, OPS.AND):
 
     f7 = Funct7(gb(31,25))
-    print(f"OPS: {op.name} Funct3: {hex(f3.value)}  Funct7: {hex(f7.value)}")
 
   # rd
-  if op not in (OPS.BEQ, OPS.BNE, OPS.BLT, OPS.BGE, OPS.BLTUU, OPS.BGEU, OPS.SB,
+  if op not in (OPS.BEQ, OPS.BNE, OPS.BLT, OPS.BGE, OPS.BLTU, OPS.BGEU, OPS.SB,
                 OPS.SH, OPS.SW, OPS.ECALL, OPS.EBREAK):
     rd = (gb(11,7))
 
@@ -92,19 +113,32 @@ def decode(ins):
             OPS.AND):
     rs2 = (gb(24,20))
 
+  # immediate values
+  # if op == OPS.JAL:
+  #   imm_j = ins[-1]*12 << 31
+  print(f"OPS: {op.name}")
+
   return op
 
-def execute():
-  pass
+def execute(op):
+  if op == OPS.ADD and f7 == Funct7.ADD:
+    rf[rd] = rs1 + rs2
+  elif op == OPS.ADD and f7 == Funct7.SUB:
+    rf[rd] = rs1 - rs2
+  elif op == OPS.JAL:
+    pass
+
+  else:
+    raise Exception(f"Operation {op} not implemented yet!")
 
 def memget(addr):
   pass
 
 def write_back(is_jump=False):
   if is_jump:
-    RegFile[PC] += NPC
+    rf[PC] += NPC
   else:
-    RegFile[PC] += 4
+    rf[PC] += 4
   return
 
 def state():
@@ -112,28 +146,59 @@ def state():
   for i in range(32):
     if i != 0 and i % 8 == 0:
       pp += '\n'
-    pp += "%3s: %08x " % ("x%d" % i, RegFile[i])
-  pp += f'\n PC: {RegFile[PC]:08x} '
+    pp += "%3s: %08x " % ("x%d" % i, rf[i])
+  pp += f'\n PC: {rf[PC]:08x} '
   print(''.join(pp))
+
+def reset():
+  global rf, memory, OFFSET
+  rf = RegFile()
+
+  # 64k
+  memory = b'\x00*0x10000'
+
+  OFFSET=0x80000000
+
+  # Beginning of program
+  rf[PC] = OFFSET
+
 
 if __name__ == "__main__":
 
-  # dat = [0b01000001111100011000001110110011, 0b01000001111100011000001110110111]
-  dat = [0b01000001111100011000001110110011]
-  for d in dat:
+  f3, f7 = None, None
+  rs1, rs2, rd = None, None, None
+  imm_j = None
+  OFFSET = 0x0
 
-    # Instruction Fetch
-    ins = fetch()
+  for x in glob.glob("riscv-tests/isa/rv32ui/*"):
+      if x.endswith('.dump'):
+        continue
+      with open(x, 'rb') as f:
+        print(f"Testing file: {x}")
 
-    # Instruction Decode and Register Fetch
-    op = decode(d) 
-    state()
+      # Put registers to initial state
+        reset()
+        e = ELFFile(f)
 
-    # Execute
-    execute()
+        for s in e.iter_segments():
+          addr, dat = s.header.p_paddr, s.data()
+          load_program(addr, dat, OFFSET)
 
-    # Memory Access
-    memget(0)
+          # Instruction Fetch
+          ins = fetch(rf[PC], OFFSET)
 
-    # Register Write Back
-    write_back(is_jump=False) # If is not a branch / jump then add 4
+          # Instruction Decode and Register Fetch
+          op = decode(ins) 
+          print(op)
+
+          # Execute
+          execute(op)
+
+          # Memory Access
+          memget(0)
+
+          # Register Write Back
+          write_back(is_jump=False) # If is not a branch / jump then add 4
+
+          state()
+          exit(0)
