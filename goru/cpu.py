@@ -67,6 +67,16 @@ def load_program(addr, data, OFFSET):
   assert addr >=0 and addr < len(memory)
   memory = memory[:addr] + data + memory[addr+len(data):]
 
+# instruction already shifted right (in to beginning)
+# length: size of bit
+def sign_extend(ins, length):
+  # if most significant bit is 1
+  if ins >> (length - 1) == 1:
+    # fill upper rest with ones
+    # TODO: is it always 32 ??
+    return - ((1 << 32) - ins)
+  else:
+    return ins 
 
 def fetch(addr, OFFSET):
   addr -= OFFSET
@@ -75,15 +85,18 @@ def fetch(addr, OFFSET):
   if addr < 0 or addr >= len(memory):
     raise Exception(f"Read out of Bounds:0x{addr:02x}")
   return struct.unpack("<I", memory[addr:addr+4])[0]
-
-# get_bytes
-def gb(s,e):
-# puts in beginning & right amount of 1111s
-  return (ins >> e) & ((1 << (s-e+1))-1)
-
 def decode(ins):
-  global f3, f7, rd, rs1, rs2, imm_j
+  global f3, f7, rd, rs1, rs2
+  global imm_j, imm_b, imm_i, imm_r, imm_s, imm_u
+  global shamt_i
+
   print(f"Decoding: {bin(ins)}")
+
+  # get_bytes
+  def gb(s,e):
+  # puts in beginning & right amount of 1111s
+    return (ins >> e) & ((1 << (s-e+1))-1)
+
 
   op = OPS(gb(6,0))
 
@@ -92,30 +105,48 @@ def decode(ins):
     f3 = Funct3(gb(14,12))
 
   # Funct7
-  if op in (OPS.SLLI, OPS.SRLI, OPS.SRAI, OPS.ADD, OPS.SUB, OPS.SLL, OPS.SLT,
-                 OPS.SLTU, OPS.XOR, OPS.SRL, OPS.SRA, OPS.OR, OPS.AND):
-
+  if op in (OPS.SLLI, OPS.ADD): 
     f7 = Funct7(gb(31,25))
 
   # rd
-  if op not in (OPS.BEQ, OPS.BNE, OPS.BLT, OPS.BGE, OPS.BLTU, OPS.BGEU, OPS.SB,
-                OPS.SH, OPS.SW, OPS.ECALL, OPS.EBREAK):
+  if op not in (OPS.BEQ, OPS.SB, OPS.ECALL):
     rd = (gb(11,7))
 
   # rs1
-  if op not in (OPS.LUI, OPS.AUIPC, OPS.JAL, OPS.ECALL, OPS.EBREAK, OPS.CSRRWI,
-                     OPS.CSRRSI, OPS.CSRRCI):
+  if op not in (OPS.LUI, OPS.AUIPC, OPS.JAL, OPS.ECALL): 
     rs1 = (gb(19,15))
 
   # rs2
-  if op in (OPS.BEQ, OPS.BNE, OPS.BLT, OPS.BGE, OPS.BLTU, OPS.BGEU, OPS.SB, OPS.SH, OPS.SW,
-            OPS.ADD, OPS.SUB, OPS.SLL, OPS.SLT, OPS.SLTU, OPS.XOR, OPS.SRL, OPS.SRA, OPS.OR,
-            OPS.AND):
+  if op in (OPS.BEQ, OPS.SB, OPS.ADD):
     rs2 = (gb(24,20))
 
-  # immediate values
+  # imm_u
+  if op in (OPS.LUI, OPS.AUIPC):
+    imm_u = gb(31,12) << 12
+
+  # imm_j
   # if op == OPS.JAL:
   #   imm_j = ins[-1]*12 << 31
+
+  # imm_i
+  if op in (OPS.JALR, OPS.LB, OPS.ADDI, OPS.CSRRW):
+    imm_i = sign_extend(gb(31,20), 12)
+
+  # imm_b
+  # if op in (OPS.BEQ, OPS.BNE, OPS.BLT, OPS.BGE, OPS.BLTU, OPS.BGEU):
+  #   imm_b = 
+
+  # imm_s
+  if op in (OPS.SB):
+    aux = ( gb(31,25) << 5 ) & gb(11,7)
+    imm_s = sign_extend(aux, 12)
+
+  # shamt_i
+  if op == OPS.SLLI:
+    shamt_i = gb(24,20)
+
+
+
   print(f"OPS: {op.name}")
 
   return op
@@ -167,7 +198,9 @@ if __name__ == "__main__":
 
   f3, f7 = None, None
   rs1, rs2, rd = None, None, None
-  imm_j = None
+  imm_j, imm_u, imm_b, imm_s, imm_i, imm_r = None, None, None, None, None, None
+  shamt_i = None
+
   OFFSET = 0x0
 
   for x in glob.glob("riscv-tests/isa/rv32ui/*"):
