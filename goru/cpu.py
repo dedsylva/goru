@@ -17,7 +17,6 @@ class RegFile:
     self.regs[key] = value & 0xFFFFFFFF
 
 PC = 32
-NPC = 0
 
 # RV32I Base Instruction Set
 class OPS(Enum):
@@ -85,20 +84,17 @@ def sign_extend(ins, length):
   else:
     return ins 
 
-def fetch(addr, OFFSET):
+def fetch(addr):
   addr -= OFFSET
-  print('aaaa', addr)
 
   if addr < 0 or addr >= len(memory):
     raise Exception(f"Read out of Bounds: 0x{addr:02x}")
   return struct.unpack("<I", memory[addr:addr+4])[0]
+
 def decode(ins):
   global f3, f7, rd, rs1, rs2
   global imm_j, imm_b, imm_i, imm_r, imm_s, imm_u
   global shamt_i
-
-  print(f"Decoding: {bin(ins)}")
-
 
   op = OPS(gb(ins, 6,0))
 
@@ -149,30 +145,28 @@ def decode(ins):
   if op == OPS.SLLI:
     shamt_i = gb(ins, 24,20)
 
-
-  print(f"OPS: {op.name}")
-
   return op
 
 def execute(op):
+  global NPC
+  NPC = 4
   if op == OPS.ADD and f7 == Funct7.ADD:
     rf[rd] = rs1 + rs2
   elif op == OPS.ADD and f7 == Funct7.SUB:
     rf[rd] = rs1 - rs2
   elif op == OPS.JAL:
-    pass
+    NPC = imm_j
+  elif op == OPS.ADDI:
+    rf[rd] = rs1 + imm_i 
 
   else:
-    raise Exception(f"Operation {op} not implemented yet!")
+    raise Exception(f"Operation {op} not implemented")
 
 def memget(addr):
   pass
 
-def write_back(is_jump=False):
-  if is_jump:
-    rf[PC] += NPC
-  else:
-    rf[PC] += 4
+def write_back():
+  rf[PC] = rf[PC] + NPC 
   return
 
 def state():
@@ -189,7 +183,7 @@ def reset():
   rf = RegFile()
 
   # 64k
-  memory = b'\x00*0x10000'
+  memory = b'\x00'*0x10000
 
   OFFSET=0x80000000
 
@@ -204,10 +198,10 @@ if __name__ == "__main__":
   imm_j, imm_u, imm_b, imm_s, imm_i, imm_r = None, None, None, None, None, None
   shamt_i = None
 
-  OFFSET = 0x0
+  OFFSET, NPC = 0x0, 0x0
 
   for x in glob.glob("riscv-tests/isa/rv32ui/*"):
-      if x.endswith('.dump'):
+      if x.endswith('.dump') or x.endswith('.S') or x.endswith('Makefrag'):
         continue
       with open(x, 'rb') as f:
         print(f"Testing file: {x}")
@@ -221,7 +215,7 @@ if __name__ == "__main__":
           load_program(addr, dat, OFFSET)
 
           # Instruction Fetch
-          ins = fetch(rf[PC], OFFSET)
+          ins = fetch(rf[PC])
 
           # Instruction Decode and Register Fetch
           op = decode(ins) 
@@ -234,7 +228,7 @@ if __name__ == "__main__":
           memget(0)
 
           # Register Write Back
-          write_back(is_jump=False) # If is not a branch / jump then add 4
+          write_back() # If is not a branch / jump then add 4
 
           state()
-          exit(0)
+          # exit(0)
