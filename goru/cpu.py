@@ -60,6 +60,11 @@ class Funct7(Enum):
   SLLI = SRLI = ADD = SLL = SLT = SLTU = XOR = SRL = OR = AND = 0b0000000
   SRAI = SUB = SRA = 0b0100000
 
+# get_bytes
+def gb(ins, s,e):
+# puts in beginning & right amount of 1111s
+  return (ins >> e) & ((1 << (s-e+1))-1)
+
 # load the program into memory
 def load_program(addr, data, OFFSET):
   global memory
@@ -72,9 +77,11 @@ def load_program(addr, data, OFFSET):
 def sign_extend(ins, length):
   # if most significant bit is 1
   if ins >> (length - 1) == 1:
-    # fill upper rest with ones
-    # TODO: is it always 32 ??
-    return - ((1 << 32) - ins)
+    # create lots of ones
+    aux = ((1 << 32) - ins)
+
+    # or ones with ins
+    return (gb(aux, 31,length) << length) | ins
   else:
     return ins 
 
@@ -83,7 +90,7 @@ def fetch(addr, OFFSET):
   print('aaaa', addr)
 
   if addr < 0 or addr >= len(memory):
-    raise Exception(f"Read out of Bounds:0x{addr:02x}")
+    raise Exception(f"Read out of Bounds: 0x{addr:02x}")
   return struct.unpack("<I", memory[addr:addr+4])[0]
 def decode(ins):
   global f3, f7, rd, rs1, rs2
@@ -92,59 +99,55 @@ def decode(ins):
 
   print(f"Decoding: {bin(ins)}")
 
-  # get_bytes
-  def gb(s,e):
-  # puts in beginning & right amount of 1111s
-    return (ins >> e) & ((1 << (s-e+1))-1)
 
-
-  op = OPS(gb(6,0))
+  op = OPS(gb(ins, 6,0))
 
   # Funct3
   if op not in (OPS.LUI, OPS.AUIPC, OPS.JAL):
-    f3 = Funct3(gb(14,12))
+    f3 = Funct3(gb(ins, 14,12))
 
   # Funct7
   if op in (OPS.SLLI, OPS.ADD): 
-    f7 = Funct7(gb(31,25))
+    f7 = Funct7(gb(ins, 31,25))
 
   # rd
   if op not in (OPS.BEQ, OPS.SB, OPS.ECALL):
-    rd = (gb(11,7))
+    rd = (gb(ins, 11,7))
 
   # rs1
   if op not in (OPS.LUI, OPS.AUIPC, OPS.JAL, OPS.ECALL): 
-    rs1 = (gb(19,15))
+    rs1 = (gb(ins, 19,15))
 
   # rs2
   if op in (OPS.BEQ, OPS.SB, OPS.ADD):
-    rs2 = (gb(24,20))
+    rs2 = (gb(ins, 24,20))
 
   # imm_u
   if op in (OPS.LUI, OPS.AUIPC):
-    imm_u = gb(31,12) << 12
+    imm_u = gb(ins, 31,12) << 12
 
   # imm_j
-  # if op == OPS.JAL:
-  #   imm_j = ins[-1]*12 << 31
+  if op == OPS.JAL:
+    aux = (gb(ins, 19,12) << 12) | (gb(ins,11,11) << 11) | (gb(ins, 30,21) << 1)
+    imm_j = sign_extend(aux, 20)
 
   # imm_i
   if op in (OPS.JALR, OPS.LB, OPS.ADDI, OPS.CSRRW):
-    imm_i = sign_extend(gb(31,20), 12)
+    imm_i = sign_extend(gb(ins, 31,20), 12)
 
   # imm_b
-  # if op in (OPS.BEQ, OPS.BNE, OPS.BLT, OPS.BGE, OPS.BLTU, OPS.BGEU):
-  #   imm_b = 
+  if op in (OPS.BEQ, OPS.BNE, OPS.BLT, OPS.BGE, OPS.BLTU, OPS.BGEU):
+    aux = ( (gb(ins, 30,25) << 5) | (gb(ins, 11,8) << 1) | (gb(ins, 7,7) << 11) )
+    imm_b = sign_extend(aux, 12)
 
   # imm_s
-  if op in (OPS.SB):
-    aux = ( gb(31,25) << 5 ) & gb(11,7)
+  if op == OPS.SB:
+    aux = ( gb(ins, 31,25) << 5 ) | gb(ins, 11,7)
     imm_s = sign_extend(aux, 12)
 
   # shamt_i
   if op == OPS.SLLI:
-    shamt_i = gb(24,20)
-
+    shamt_i = gb(ins, 24,20)
 
 
   print(f"OPS: {op.name}")
