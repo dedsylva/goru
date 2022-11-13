@@ -22,7 +22,7 @@ PC = 32
 class OPS(Enum):
   # U-Type
   LUI   = 0b0110111
-  AUIPC = 0b0110111
+  AUIPC = 0b0010111
 
   # J-Type
   JAL  =  0b1101111
@@ -45,6 +45,9 @@ class OPS(Enum):
   # System
   ECALL = EBREAK = 0b1110011
 
+  # NO OPS
+  FENCE = 0b0001111
+
 class Funct3(Enum):
   JALR = BEQ = LB = SB = ADDI = ADD = SUB = ECALL = EBREAK = 0b000
   BNE = LH = SH = SLLI = CSRRW = SLL = 0b001
@@ -56,7 +59,7 @@ class Funct3(Enum):
   BGEU = ANDI = AND = CSRRCI = 0b111
 
 class Funct7(Enum):
-  SLLI = SRLI = ADD = SLL = SLT = SLTU = XOR = SRL = OR = AND = 0b0000000
+  SLLI = SRLI = ADD = SLL = SLT = SLTU = XOR = SRL = OR = AND = ECALL = 0b0000000
   SRAI = SUB = SRA = 0b0100000
 
 # get_bytes
@@ -96,15 +99,24 @@ def decode(ins):
   global imm_j, imm_b, imm_i, imm_r, imm_s, imm_u
   global shamt_i
 
+  f3, f7 = None, None
+
+  # TODO: make the decode smarter. Currently we are assigning f3,f7 to wrong ops
   op = OPS(gb(ins, 6,0))
 
   # Funct3
   if op not in (OPS.LUI, OPS.AUIPC, OPS.JAL):
-    f3 = Funct3(gb(ins, 14,12))
+    try:
+      f3 = Funct3(gb(ins, 14,12))
+    except ValueError:
+      f3 = None
 
   # Funct7
-  if op in (OPS.SLLI, OPS.ADD): 
-    f7 = Funct7(gb(ins, 31,25))
+  if op in (OPS.SLLI, OPS.ADD, OPS.ECALL): 
+    try:
+      f7 = Funct7(gb(ins, 31,25))
+    except ValueError:
+      f7 = None
 
   # rd
   if op not in (OPS.BEQ, OPS.SB, OPS.ECALL):
@@ -142,7 +154,7 @@ def decode(ins):
     imm_s = sign_extend(aux, 12)
 
   # shamt_i
-  if op == OPS.SLLI:
+  if op == OPS.ADDI and f3 == Funct3.SLLI:
     shamt_i = gb(ins, 24,20)
 
   return op
@@ -156,11 +168,27 @@ def execute(op):
     rf[rd] = rs1 - rs2
   elif op == OPS.JAL:
     NPC = imm_j
-  elif op == OPS.ADDI:
-    rf[rd] = rs1 + imm_i 
-
+  elif op == OPS.ADDI and f3 == Funct3.ADDI:
+    rf[rd] = rf[rs1] + imm_i 
+  elif op == OPS.ADDI and f3 == Funct3.SLLI:
+    rf[rd] = rf[rs1] << shamt_i
+  elif op == OPS.ADDI and f3 == Funct3.ORI:
+    rf[rd] = rf[rs1] | imm_i
+  elif op == OPS.CSRRW and f3 != Funct3.ECALL:
+    pass
+  elif op == OPS.BNE:
+    if f3 == Funct3.BNE:
+      NPC = imm_b if rf[rs1] != rf[rs2] else 4
+  elif op == OPS.AUIPC:
+    rf[rd] += imm_u
+  elif op == OPS.LUI:
+    rf[rd] = imm_u
+  elif op == OPS.FENCE:
+    pass
+  elif op == OPS.CSRRW and f3 in (Funct3.ECALL, None) and f7 in (Funct7.ECALL, None):
+    END = True
   else:
-    raise Exception(f"Operation {op} not implemented")
+    raise Exception(f"Operation {op} not implemented, {f3}, {f7}")
 
 def memget(addr):
   pass
@@ -177,6 +205,7 @@ def state():
     pp += "%3s: %08x " % ("x%d" % i, rf[i])
   pp += f'\n PC: {rf[PC]:08x} '
   print(''.join(pp))
+  print('\n')
 
 def reset():
   global rf, memory, OFFSET
@@ -190,6 +219,34 @@ def reset():
   # Beginning of program
   rf[PC] = OFFSET
 
+def run():
+
+  # Instruction Fetch
+  ins = fetch(rf[PC])
+  print(f"ins: {bin(ins)}")
+
+  # Instruction Decode and Register Fetch
+  op = decode(ins) 
+  print(op)
+
+  # Execute
+  execute(op)
+
+  # Memory Access
+  memget(0)
+
+  # Register Write Back
+  write_back() # If is not a branch / jump then add 4
+
+  state()
+  
+  if END:
+    if rf[3] > 1:
+      raise Exception("TEST FAILED!")
+    else:
+      return False
+
+  return True
 
 if __name__ == "__main__":
 
@@ -197,10 +254,12 @@ if __name__ == "__main__":
   rs1, rs2, rd = None, None, None
   imm_j, imm_u, imm_b, imm_s, imm_i, imm_r = None, None, None, None, None, None
   shamt_i = None
+  counter = 0
+  END = False
 
   OFFSET, NPC = 0x0, 0x0
 
-  for x in glob.glob("riscv-tests/isa/rv32ui/*"):
+  for x in glob.glob("riscv-tests/isa/rv32ui/add"):
       if x.endswith('.dump') or x.endswith('.S') or x.endswith('Makefrag'):
         continue
       with open(x, 'rb') as f:
@@ -212,23 +271,11 @@ if __name__ == "__main__":
 
         for s in e.iter_segments():
           addr, dat = s.header.p_paddr, s.data()
+          if addr == 0: continue
           load_program(addr, dat, OFFSET)
 
-          # Instruction Fetch
-          ins = fetch(rf[PC])
+          while run():
+            counter += 1
 
-          # Instruction Decode and Register Fetch
-          op = decode(ins) 
-          print(op)
-
-          # Execute
-          execute(op)
-
-          # Memory Access
-          memget(0)
-
-          # Register Write Back
-          write_back() # If is not a branch / jump then add 4
-
-          state()
-          # exit(0)
+          print(f"Ran {counter} instructions")
+          exit(0)
