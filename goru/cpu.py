@@ -165,6 +165,7 @@ def decode(ins):
 def execute(op):
   global NPC
   NPC = 4
+  # ALU INSTRUCTIONS
   if op == OPS.ADD and f7 == Funct7.ADD:
     rf[rd] = rf[rs1] + rf[rs2]
   elif op == OPS.ADD and f7 == Funct7.SUB:
@@ -177,30 +178,45 @@ def execute(op):
     rf[rd] = rf[rs1] << shamt_i
   elif op == OPS.ADDI and f3 == Funct3.ORI:
     rf[rd] = rf[rs1] | imm_i
-  elif op == OPS.CSRRW and f3 != Funct3.ECALL:
-    pass
+  elif op == OPS.ADDI and f3 == Funct3.ANDI:
+    rf[rd] = rf[rs1] & imm_i
+  elif op == OPS.AUIPC:
+    rf[rd] = imm_u
+
+  # BRANCH INSTRUCTIONS
   elif op == OPS.BNE and f3 == Funct3.BNE:
       NPC = imm_b + 4 if rf[rs1] != rf[rs2] else 4
   elif op == OPS.BNE and f3 == Funct3.BEQ:
       NPC = imm_b + 4 if rf[rs1] == rf[rs2] else 4
   elif op == OPS.BNE and f3 == Funct3.BLT:
       NPC = imm_b + 4 if rf[rs1] < rf[rs2] else 4
-  elif op == OPS.AUIPC:
-    rf[rd] = imm_u
+  elif op == OPS.BNE and f3 == Funct3.BGE:
+      NPC = imm_b + 4 if rf[rs1] >= rf[rs2] else 4
+  elif op == OPS.BNE and f3 == Funct3.BGEU:
+      NPC = imm_b + 4 if rf[rs1] >= abs(rf[rs2]) else 4
+  elif op == OPS.BNE and f3 == Funct3.BLTU:
+      NPC = imm_b + 4 if rf[rs1] <= abs(rf[rs2]) else 4
+
+  # LOAD INSTRUCTIONS
   elif op == OPS.LUI:
     rf[rd] = imm_u
+
+  # System INSTRUCTIONS
   elif op == OPS.FENCE:
+    pass
+  elif op == OPS.CSRRW and f3 != Funct3.ECALL:
     pass
   elif op == OPS.CSRRW and f3 in (Funct3.ECALL, None):
     END = True
   else:
+    state()
     raise Exception(f"Operation {op} not implemented, {f3}, {f7}")
 
 def memget(addr):
   pass
 
 def write_back():
-  rf[PC] = rf[PC] + NPC 
+  rf[PC] += NPC 
   return
 
 def state():
