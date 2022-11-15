@@ -48,6 +48,9 @@ class OPS(Enum):
   # NO OPS
   FENCE = 0b0001111
 
+  # END OF PROGRAM
+  UNIMP = 0b0
+
 class Funct3(Enum):
   JALR = BEQ = LB = SB = ADDI = ADD = SUB = ECALL = EBREAK = 0b000
   BNE = LH = SH = SLLI = CSRRW = SLL = 0b001
@@ -163,9 +166,9 @@ def execute(op):
   global NPC
   NPC = 4
   if op == OPS.ADD and f7 == Funct7.ADD:
-    rf[rd] = rs1 + rs2
+    rf[rd] = rf[rs1] + rf[rs2]
   elif op == OPS.ADD and f7 == Funct7.SUB:
-    rf[rd] = rs1 - rs2
+    rf[rd] = rf[rs1] - rf[rs2]
   elif op == OPS.JAL:
     NPC = imm_j
   elif op == OPS.ADDI and f3 == Funct3.ADDI:
@@ -176,16 +179,19 @@ def execute(op):
     rf[rd] = rf[rs1] | imm_i
   elif op == OPS.CSRRW and f3 != Funct3.ECALL:
     pass
-  elif op == OPS.BNE:
-    if f3 == Funct3.BNE:
-      NPC = imm_b if rf[rs1] != rf[rs2] else 4
+  elif op == OPS.BNE and f3 == Funct3.BNE:
+      NPC = imm_b + 4 if rf[rs1] != rf[rs2] else 4
+  elif op == OPS.BNE and f3 == Funct3.BEQ:
+      NPC = imm_b + 4 if rf[rs1] == rf[rs2] else 4
+  elif op == OPS.BNE and f3 == Funct3.BLT:
+      NPC = imm_b + 4 if rf[rs1] < rf[rs2] else 4
   elif op == OPS.AUIPC:
-    rf[rd] += imm_u
+    rf[rd] = imm_u
   elif op == OPS.LUI:
     rf[rd] = imm_u
   elif op == OPS.FENCE:
     pass
-  elif op == OPS.CSRRW and f3 in (Funct3.ECALL, None) and f7 in (Funct7.ECALL, None):
+  elif op == OPS.CSRRW and f3 in (Funct3.ECALL, None):
     END = True
   else:
     raise Exception(f"Operation {op} not implemented, {f3}, {f7}")
@@ -223,11 +229,18 @@ def run():
 
   # Instruction Fetch
   ins = fetch(rf[PC])
-  print(f"ins: {bin(ins)}")
+
+  if DEBUG:
+    print(f"ins: {bin(ins)}")
 
   # Instruction Decode and Register Fetch
   op = decode(ins) 
-  print(op)
+
+  if DEBUG:
+    print(op)
+  if op == OPS.UNIMP:
+    print(f"SUCCESS!")
+    return False
 
   # Execute
   execute(op)
@@ -238,13 +251,15 @@ def run():
   # Register Write Back
   write_back() # If is not a branch / jump then add 4
 
-  state()
+  if DEBUG:
+    state()
   
   if END:
-    if rf[3] > 1:
-      raise Exception("TEST FAILED!")
-    else:
-      return False
+    return False
+    # if rf[3] > 1:
+      # raise Exception("TEST FAILED!")
+    # else:
+      # return False
 
   return True
 
@@ -256,13 +271,15 @@ if __name__ == "__main__":
   shamt_i = None
   counter = 0
   END = False
+  DEBUG = os.getenv('DEBUG', 0)
 
   OFFSET, NPC = 0x0, 0x0
 
-  for x in glob.glob("riscv-tests/isa/rv32ui/add"):
+  for x in glob.glob("riscv-tests/isa/rv32ui/*"):
       if x.endswith('.dump') or x.endswith('.S') or x.endswith('Makefrag'):
         continue
       with open(x, 'rb') as f:
+        # if DEBUG:
         print(f"Testing file: {x}")
 
       # Put registers to initial state
@@ -274,8 +291,7 @@ if __name__ == "__main__":
           if addr == 0: continue
           load_program(addr, dat, OFFSET)
 
-          while run():
-            counter += 1
+        while run():
+          counter += 1
 
-          print(f"Ran {counter} instructions")
-          exit(0)
+        print(f"Ran {counter} instructions")
