@@ -163,6 +163,7 @@ def decode(ins):
   return op
 
 def execute(op):
+
   global NPC
   NPC = 4
   # ALU INSTRUCTIONS
@@ -180,6 +181,10 @@ def execute(op):
     rf[rd] = rf[rs1] | imm_i
   elif op == OPS.ADDI and f3 == Funct3.ANDI:
     rf[rd] = rf[rs1] & imm_i
+  elif op == OPS.ADDI and f3 == Funct3.BGE and f7 == Funct7.SRAI:
+    rf[rd] = rf[rs1] << shamt_i
+  elif op == OPS.ADDI and f3 == Funct3.BGE and f7 == Funct7.SLLI:
+    rf[rd] = (rf[rs1] % 0x100000000) >> shamt_i
   elif op == OPS.AUIPC:
     rf[rd] = imm_u
 
@@ -198,6 +203,8 @@ def execute(op):
       NPC = imm_b + 4 if rf[rs1] <= abs(rf[rs2]) else 4
 
   # LOAD INSTRUCTIONS
+  elif op == OPS.LB and f3 == Funct3.BNE:
+    rf[rd] = sign_extend(rs1+imm_i, 16)
   elif op == OPS.LUI:
     rf[rd] = imm_u
 
@@ -220,11 +227,14 @@ def write_back():
   return
 
 def state():
+  rg = ['x0', 'ra', 'sp', 'gp', 'tp', 't0','t1', 't2', 's0', 's1', 'a0', 'a1',
+        'a2', 'a3', 'a4', 'a5', 'a6', 'a7', 's2', 's3', 's4', 's5', 's6','s7', 
+        's8', 's9', 's10','s11', 't3', 't4', 't5', 't6']
   pp = ''
   for i in range(32):
     if i != 0 and i % 8 == 0:
       pp += '\n'
-    pp += "%3s: %08x " % ("x%d" % i, rf[i])
+    pp += "%3s: %08x " % (rg[i], rf[i])
   pp += f'\n PC: {rf[PC]:08x} '
   print(''.join(pp))
   print('\n')
@@ -247,7 +257,7 @@ def run():
   ins = fetch(rf[PC])
 
   if DEBUG:
-    print(f"ins: {bin(ins)}")
+    print(f"ins: {bin(ins), hex(ins)}")
 
   # Instruction Decode and Register Fetch
   op = decode(ins) 
