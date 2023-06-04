@@ -291,7 +291,7 @@ if __name__ == "__main__":
 
   OFFSET, NPC = 0x0, 0x0
 
-  for x in glob.glob("riscv-tests/isa/rv32ui/*"):
+  for x in glob.glob("../../riscv-tests/isa/rv32ui-p-*"):
       if x.endswith('.dump') or x.endswith('.S') or x.endswith('Makefrag'):
         continue
       with open(x, 'rb') as f:
