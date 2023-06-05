@@ -1,0 +1,2 @@
+pyelftools==0.29
+unittest-prettify==1.0.post4
