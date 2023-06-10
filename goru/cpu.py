@@ -5,6 +5,8 @@ import glob
 import binascii
 import struct
 from elftools.elf.elffile import ELFFile
+from hexdump import hexdump
+
 
 class RegFile:
   def __init__(self):
@@ -91,7 +93,10 @@ def sign_extend(ins, length):
     return ins 
 
 def fetch(addr):
+ 
   addr -= OFFSET
+  if DEBUG:
+    hexdump(memory[addr:addr+4])
 
   if addr < 0 or addr >= len(memory):
     raise Exception(f"Read out of Bounds: 0x{addr:02x}")
@@ -113,6 +118,7 @@ def decode(ins):
       f3 = Funct3(gb(ins, 14,12))
     except ValueError:
       f3 = None
+
 
   # Funct7
   if op in (OPS.SLLI, OPS.ADD, OPS.ECALL): 
@@ -152,7 +158,7 @@ def decode(ins):
     imm_b = sign_extend(aux, 12)
 
   # imm_s
-  if op == OPS.SB:
+  if op in (OPS.SB, OPS.LB):
     aux = ( gb(ins, 31,25) << 5 ) | gb(ins, 11,7)
     imm_s = sign_extend(aux, 12)
 
@@ -203,10 +209,30 @@ def execute(op):
       NPC = imm_b + 4 if rf[rs1] <= abs(rf[rs2]) else 4
 
   # LOAD INSTRUCTIONS
-  elif op == OPS.LB and f3 == Funct3.BNE:
-    rf[rd] = sign_extend(rs1+imm_i, 16)
+  elif op == OPS.LB and f3 == Funct3.LB:
+    addr = rf[rs1 + imm_i] + OFFSET # need to add OFFSET because fetch subtracts it (ugly I know)
+    rf[rd] = sign_extend(fetch(addr), 8)
+  elif op == OPS.LBU and f3 == Funct3.LBU:
+    addr = rf[rs1 + imm_i] + OFFSET 
+    rf[rd] = fetch(addr)
+  elif op == OPS.LH and f3 == Funct3.LH:
+    addr = rf[rs1 + imm_i] + OFFSET 
+    rf[rd] = sign_extend(fetch(addr)&0xFFF, 16)
+  elif op == OPS.LHU and f3 == Funct3.LHU:
+    addr = rf[rs1 + imm_i] + OFFSET
+    rf[rd] = fetch(addr)&0xFFF
   elif op == OPS.LUI:
     rf[rd] = imm_u
+
+
+  # STORE INSTRUCTIONS
+  # elif op == OPS.SB and f3 == Funct3.BNE:
+    # addr = rs1+imm_s
+    # if DEBUG:
+      # print(f"rs1: {hex(rs1)}, imm_s: {hex(imm_s)}")
+      # print(f"fetching memory in addr {hex(addr)}")
+      # print(f"memget({hex(addr)}): {memget(addr)}")
+    # rf[rd] = memget(addr) & 0b11111111 #bitwise AND with 0b11111111 to get 8 least significant bits
 
   # System INSTRUCTIONS
   elif op == OPS.FENCE:
@@ -218,9 +244,6 @@ def execute(op):
   else:
     state()
     raise Exception(f"Operation {op} not implemented, {f3}, {f7}")
-
-def memget(addr):
-  pass
 
 def write_back():
   rf[PC] += NPC 
@@ -257,7 +280,7 @@ def run():
   ins = fetch(rf[PC])
 
   if DEBUG:
-    print(f"ins: {bin(ins), hex(ins)}")
+    print(f"instruction: {bin(ins)} at address: {hex(ins)}")
 
   # Instruction Decode and Register Fetch
   op = decode(ins) 
@@ -270,9 +293,6 @@ def run():
 
   # Execute
   execute(op)
-
-  # Memory Access
-  memget(0)
 
   # Register Write Back
   write_back() # If is not a branch / jump then add 4
