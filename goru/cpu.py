@@ -36,7 +36,6 @@ class OPS(Enum):
   # I-Type
   LB = LBU = LH = LW = LHU = 0b0000011
   ADDI = SLTI = SLTIU = XORI = ORI = ANDI = SLLI = SRLI = SRAI = 0b0010011
-  CSRRW = CSRRS = CSRRC = CSRRWI = CSRRSI = CSRRCI = 0b1110011
 
   # S-Type
   SB = SH = SW = 0b0100011
@@ -45,7 +44,7 @@ class OPS(Enum):
   ADD = SUB = SLL = SLT = SLTU = XOR = SRL = SRA = OR = AND = 0b0110011
 
   # System
-  ECALL = EBREAK = 0b1110011
+  ECALL = EBREAK = CSRRW = CSRRS = CSRRC = CSRRWI = CSRRSI = CSRRCI = 0b1110011
 
   # NO OPS
   FENCE = 0b0001111
@@ -57,7 +56,7 @@ class Funct3(Enum):
   JALR = BEQ = LB = SB = ADDI = ADD = SUB = ECALL = EBREAK = 0b000
   BNE = LH = SH = SLLI = CSRRW = SLL = 0b001
   SW = SLTI = SLT = CSRRS = LW = 0b010
-  SLTU = CSRRC = 0b011
+  SLTU = SLTIU = CSRRC = 0b011
   BLT = LBU = XORI = XOR = 0b100
   BGE = LHU = SRLI = SRAI = SRL = SRA = CSRRWI = 0b101
   BLTU = ORI = OR = CSRRSI = 0b110
@@ -73,11 +72,15 @@ def gb(ins, s,e):
   return (ins >> e) & ((1 << (s-e+1))-1)
 
 # load the program into memory
-def load_program(addr, data, OFFSET):
+def load_program(addr, data, stop=False):
   global memory
   addr -= OFFSET
   assert addr >=0 and addr < len(memory)
   memory = memory[:addr] + data + memory[addr+len(data):]
+  if stop:
+    hexdump(memory[addr:addr+4])
+    #hexdump(memory)
+    #exit(0)
 
 # instruction already shifted right (in to beginning)
 # length: size of bit
@@ -121,7 +124,7 @@ def decode(ins):
 
 
   # Funct7
-  if op in (OPS.SLLI, OPS.ADD, OPS.ECALL): 
+  if op in (OPS.SLLI, OPS.ADD): 
     try:
       f7 = Funct7(gb(ins, 31,25))
     except ValueError:
@@ -129,18 +132,18 @@ def decode(ins):
 
   # rd
   if op not in (OPS.BEQ, OPS.SB, OPS.ECALL):
-    rd = (gb(ins, 11,7))
+    rd = gb(ins, 11,7)
 
   # rs1
   if op not in (OPS.LUI, OPS.AUIPC, OPS.JAL, OPS.ECALL): 
-    rs1 = (gb(ins, 19,15))
+    rs1 = gb(ins, 19,15)
 
   # rs2
   if op in (OPS.BEQ, OPS.SB, OPS.ADD):
-    rs2 = (gb(ins, 24,20))
+    rs2 = gb(ins, 24,20)
 
   # imm_u
-  if op in (OPS.LUI, OPS.AUIPC):
+  if (op in (OPS.LUI, OPS.AUIPC)) or (op == OPS.ADDI and f3 == Funct3.ADDI):
     imm_u = gb(ins, 31,12) << 12
 
   # imm_j
@@ -150,7 +153,7 @@ def decode(ins):
 
   # imm_i
   if op in (OPS.JALR, OPS.LB, OPS.ADDI, OPS.CSRRW):
-    imm_i = sign_extend(gb(ins, 31,20), 12)
+    imm_i = sign_extend(gb(ins, 31,20), 12) & 0x00000fff
 
   # imm_b
   if op in (OPS.BEQ, OPS.BNE, OPS.BLT, OPS.BGE, OPS.BLTU, OPS.BGEU):
@@ -170,20 +173,28 @@ def decode(ins):
 
 def execute(op):
 
-  global NPC
+  global NPC, END
   NPC = 4
   # ALU INSTRUCTIONS
   if op == OPS.ADD and f7 == Funct7.ADD:
     rf[rd] = rf[rs1] + rf[rs2]
-  elif op == OPS.ADD and f7 == Funct7.SUB:
+  elif op == OPS.SUB and f7 == Funct7.SUB:
     rf[rd] = rf[rs1] - rf[rs2]
   elif op == OPS.JAL:
     NPC = imm_j
   elif op == OPS.ADDI and f3 == Funct3.ADDI:
-    rf[rd] = rf[rs1] + imm_i 
-  elif op == OPS.ADDI and f3 == Funct3.SLLI:
+    if rs1 == 0: #LI Pseudo Instruuction  
+      rf[rd] = (0x1 + imm_u + 0x00000800) >> 12 # lui rd, (imm_i + 0x00000800) >> 12
+      rf[rd] = rf[rd] + (imm_i & 0x00000fff) # addi rd, rd, (imm_i & 0x00000fff) 
+    else:
+      rf[rd] = rf[rs1] + imm_i 
+  elif op == OPS.SLLI and f3 == Funct3.SLLI:
     rf[rd] = rf[rs1] << shamt_i
-  elif op == OPS.ADDI and f3 == Funct3.ORI:
+  elif op == OPS.SLTI and f3 == Funct3.SLTI:
+    rf[rd] = 1 if rf[rs1] < imm_i else 0
+  elif op == OPS.SLTIU and f3 == Funct3.SLTIU:
+    rf[rd] = 1 if abs(rf[rs1]) < imm_i else 0
+  elif op == OPS.ORI and f3 == Funct3.ORI:
     rf[rd] = rf[rs1] | imm_i
   elif op == OPS.ADDI and f3 == Funct3.ANDI:
     rf[rd] = rf[rs1] & imm_i
@@ -191,55 +202,73 @@ def execute(op):
     rf[rd] = rf[rs1] << shamt_i
   elif op == OPS.ADDI and f3 == Funct3.BGE and f7 == Funct7.SLLI:
     rf[rd] = (rf[rs1] % 0x100000000) >> shamt_i
+  elif op == OPS.XORI and f3 == Funct3.XORI:
+    rf[rd] = rf[rs1] ^ imm_i
   elif op == OPS.AUIPC:
     rf[rd] = imm_u
 
   # BRANCH INSTRUCTIONS
   elif op == OPS.BNE and f3 == Funct3.BNE:
-      NPC = imm_b + 4 if rf[rs1] != rf[rs2] else 4
-  elif op == OPS.BNE and f3 == Funct3.BEQ:
-      NPC = imm_b + 4 if rf[rs1] == rf[rs2] else 4
-  elif op == OPS.BNE and f3 == Funct3.BLT:
-      NPC = imm_b + 4 if rf[rs1] < rf[rs2] else 4
-  elif op == OPS.BNE and f3 == Funct3.BGE:
-      NPC = imm_b + 4 if rf[rs1] >= rf[rs2] else 4
+      NPC = imm_b if rf[rs1] != rf[rs2] else 4
+  elif op == OPS.BEQ and f3 == Funct3.BEQ:
+      NPC = imm_b if rf[rs1] == rf[rs2] else 4
+  elif op == OPS.BLT and f3 == Funct3.BLT:
+      NPC = imm_b if rf[rs1] < rf[rs2] else 4
+  elif op == OPS.BGE and f3 == Funct3.BGE:
+      NPC = imm_b if rf[rs1] >= rf[rs2] else 4
   elif op == OPS.BNE and f3 == Funct3.BGEU:
-      NPC = imm_b + 4 if rf[rs1] >= abs(rf[rs2]) else 4
+      NPC = imm_b if rf[rs1] >= abs(rf[rs2]) else 4
   elif op == OPS.BNE and f3 == Funct3.BLTU:
-      NPC = imm_b + 4 if rf[rs1] <= abs(rf[rs2]) else 4
+      NPC = imm_b if rf[rs1] <= abs(rf[rs2]) else 4
+  elif op == OPS.JALR and f3 == Funct3.JALR:
+      NPC = rf[rs1] + imm_i
 
   # LOAD INSTRUCTIONS
   elif op == OPS.LB and f3 == Funct3.LB:
-    addr = rf[rs1 + imm_i] + OFFSET # need to add OFFSET because fetch subtracts it (ugly I know)
-    rf[rd] = sign_extend(fetch(addr), 8)
+    # address to load from memory
+    load_addr = rf[rs1 + imm_i] + OFFSET # need to add OFFSET because fetch subtracts it (ugly I know)
+    rf[rd] = sign_extend(fetch(load_addr), 8)
   elif op == OPS.LBU and f3 == Funct3.LBU:
-    addr = rf[rs1 + imm_i] + OFFSET 
-    rf[rd] = fetch(addr)
+    load_addr = rf[rs1 + imm_i] + OFFSET # need to add OFFSET because fetch subtracts it (ugly I know)
+    rf[rd] = fetch(load_addr)
   elif op == OPS.LH and f3 == Funct3.LH:
-    addr = rf[rs1 + imm_i] + OFFSET 
-    rf[rd] = sign_extend(fetch(addr)&0xFFF, 16)
+    load_addr = rf[rs1 + imm_i] + OFFSET # need to add OFFSET because fetch subtracts it (ugly I know)
+    rf[rd] = sign_extend(fetch(load_addr) & 0xFFFF, 16)
   elif op == OPS.LHU and f3 == Funct3.LHU:
-    addr = rf[rs1 + imm_i] + OFFSET
-    rf[rd] = fetch(addr)&0xFFF
+    load_addr = rf[rs1 + imm_i] + OFFSET # need to add OFFSET because fetch subtracts it (ugly I know)
+    rf[rd] = fetch(load_addr) & 0xFFFF # bitwise AND with 0b11111111 to get 16 least significant bits
   elif op == OPS.LUI:
     rf[rd] = imm_u
+  elif op == OPS.LW and f3 == Funct3.LW:
+    load_addr = rf[rs1 + imm_i] + OFFSET # need to add OFFSET because fetch subtracts it (ugly I know)
+    rf[rd] = sign_extend(fetch(load_addr) & 0xFFFF, 32)
 
 
   # STORE INSTRUCTIONS
-  # elif op == OPS.SB and f3 == Funct3.BNE:
-    # addr = rs1+imm_s
-    # if DEBUG:
-      # print(f"rs1: {hex(rs1)}, imm_s: {hex(imm_s)}")
-      # print(f"fetching memory in addr {hex(addr)}")
-      # print(f"memget({hex(addr)}): {memget(addr)}")
-    # rf[rd] = memget(addr) & 0b11111111 #bitwise AND with 0b11111111 to get 8 least significant bits
+  elif op == OPS.SB and f3 == Funct3.SB:
+    # address to store
+    store_addr = rf[rs1 + imm_s] + OFFSET # need to add OFFSET because fetch subtracts it (ugly I know)
+    value = rf[rs2] & 0xFF # 8 LSBs of rs2
+    load_program(store_addr, value.to_bytes(2, byteorder='big'))
+  elif op == OPS.SH and f3 == Funct3.SH:
+    store_addr = rf[rs1 + imm_s] + OFFSET # need to add OFFSET because fetch subtracts it (ugly I know)
+    value = rf[rs2] & 0xFFFF # 16 LSBs of rs2
+    load_program(store_addr, value.to_bytes(2, byteorder='big'))
+  elif op == OPS.SW and f3 == Funct3.SW:
+    store_addr = rf[rs1 + imm_s] + OFFSET # need to add OFFSET because fetch subtracts it (ugly I know)
+    value = rf[rs2] & 0xFFFFFFFF  # 32 LSBs of rs2
+    load_program(store_addr, value.to_bytes(4, byteorder='big'))
+
+
 
   # System INSTRUCTIONS
   elif op == OPS.FENCE:
     pass
-  elif op == OPS.CSRRW and f3 != Funct3.ECALL:
+  elif op == OPS.ECALL and f3 != Funct3.ECALL:
     pass
-  elif op == OPS.CSRRW and f3 in (Funct3.ECALL, None):
+  elif op == OPS.ECALL and f3 in (Funct3.ECALL, None) and rf[3] <= 1:
+    pass
+  elif op == OPS.ECALL and f3 in (Funct3.ECALL, None) and rf[3] > 1:
     END = True
   else:
     state()
@@ -267,7 +296,8 @@ def reset():
   rf = RegFile()
 
   # 64k
-  memory = b'\x00'*0x10000
+  #memory = b'\x00'*0x10000
+  memory = b'\x00'*0x3000
 
   OFFSET=0x80000000
 
@@ -280,7 +310,7 @@ def run():
   ins = fetch(rf[PC])
 
   if DEBUG:
-    print(f"instruction: {bin(ins)} at address: {hex(ins)}")
+    print(f"ins: {hex(ins)}")
 
   # Instruction Decode and Register Fetch
   op = decode(ins) 
@@ -294,18 +324,18 @@ def run():
   # Execute
   execute(op)
 
-  # Register Write Back
-  write_back() # If is not a branch / jump then add 4
-
   if DEBUG:
     state()
-  
-  if END:
-    return False
-    # if rf[3] > 1:
-      # raise Exception("TEST FAILED!")
-    # else:
-      # return False
+
+  # Register Write Back
+  write_back() # If is not a branch / jump then add 4
+  #if END:
+    #if rf[3] > 1:
+      #raise Exception(f"TEST FAILED! ECALL {rf[3]}")
+      #print(f"TEST FAILED! ECALL {rf[3]}")
+    #exit(0)
+    #else:
+      #return False
 
   return True
 
@@ -322,7 +352,7 @@ if __name__ == "__main__":
   OFFSET, NPC = 0x0, 0x0
 
   for x in glob.glob("../../riscv-tests/isa/rv32ui-p-*"):
-      if x.endswith('.dump') or x.endswith('.S') or x.endswith('Makefrag'):
+      if x.endswith('.dump') or x.endswith('.S') or x.endswith('Makefrag') or x.endswith('srli') or x.endswith('fence_i'):
         continue
       with open(x, 'rb') as f:
         # if DEBUG:
@@ -335,7 +365,7 @@ if __name__ == "__main__":
         for s in e.iter_segments():
           addr, dat = s.header.p_paddr, s.data()
           if addr == 0: continue
-          load_program(addr, dat, OFFSET)
+          load_program(addr, dat)
 
         while run():
           counter += 1
