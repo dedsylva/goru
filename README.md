@@ -16,4 +16,5 @@ pip3 install -r requirements.txt
 ```bash
 cd goru
 ./cpu.py
+
 ```
